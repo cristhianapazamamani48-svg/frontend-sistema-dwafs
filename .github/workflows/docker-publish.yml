@@ -13,6 +13,7 @@ jobs:
   build-and-push:
     name: Build and publish frontend image
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
 
     steps:
       - name: Check out repository
@@ -27,12 +28,41 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Preserve current production image for rollback
+        env:
+          IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/frontend-cine-dip
+        run: |
+          if inspect_output=$(docker buildx imagetools inspect "${IMAGE}:production" 2>&1); then
+            docker buildx imagetools create --tag "${IMAGE}:previous" "${IMAGE}:production"
+          elif grep -Eqi 'manifest unknown|no such manifest|not found' <<< "$inspect_output"; then
+            echo "No previous production image exists; skipping rollback tag on first release."
+          else
+            printf '%s\n' "$inspect_output" >&2
+            exit 1
+          fi
+
       - name: Build and push frontend image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           push: true
+          build-args: |
+            VITE_CINE_API_URL=/api/v1
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/frontend-cine-dip:${{ github.sha }}
             ${{ secrets.DOCKERHUB_USERNAME }}/frontend-cine-dip:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/frontend-cine-dip:production
+
+  deploy:
+    name: Deploy frontend on Ubuntu Server
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 30
+
+    steps:
+      - name: Deploy frontend with Docker Compose
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: bash /opt/cine-deploy/deploy.sh frontend "$IMAGE_TAG"

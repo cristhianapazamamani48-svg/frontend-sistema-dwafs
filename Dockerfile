@@ -1,21 +1,18 @@
-# Imagen base oficial de Node.js en modo desarrollo
-FROM node:22.23.1-slim
+FROM node:22.23.1-slim AS build
 
-# Directorio de trabajo en el contenedor
 WORKDIR /app
 
-# Copiar archivos de dependencias
 COPY package*.json ./
+RUN npm ci --force
 
-# Instalar dependencias del proyecto (utilizando --force por compatibilidad de paquetes en React 19)
-RUN npm install --force
-
-# Copiar el resto del codigo fuente
 COPY . .
+ARG VITE_CINE_API_URL=/api/v1
+ENV VITE_CINE_API_URL=${VITE_CINE_API_URL}
+RUN npm run build
 
-# Exponer el puerto de desarrollo de Vite
-EXPOSE 5173
+FROM nginx:alpine AS runtime
 
-# Levantar el servidor de desarrollo de Vite
-CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/dist /usr/share/nginx/html
 
+EXPOSE 80
